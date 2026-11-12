@@ -2203,6 +2203,13 @@ function pollPads(dt = 0) {
   walkSync();
   if (!V.on || !lx && !ly)
     return;
+  if (V.aligning) {
+    const cl = (v, a, b) => Math.max(a, Math.min(b, v));
+    if (Math.abs(lx) > 0.3) SET.desloc = cl((SET.desloc || 0) - lx * 0.05 * dt, -0.2, 0.2);
+    if (Math.abs(ly) > 0.3) SET.centro = cl(SET.centro + ly * 0.05 * dt, -0.15, 0.3);
+    V.alignDirty = 1;
+    return;
+  }
   if (V.mode === "oculos" && V.sensor) {
     rig.rotation.y -= lx * 1.4 * dt;
     if (Math.abs(ly) > 0.3) walkStep(-ly * 0.9 * dt);
@@ -2370,7 +2377,7 @@ function render() {
         m.uniforms.k2.value = k2;
         m.uniforms.aspect.value = asp;
         m.uniforms.zoom.value = zoom;
-        m.uniforms.center.value.set(0.5 + (i === 0 ? 1 : -1) * cEff, 0.5);
+        m.uniforms.center.value.set(0.5 + (i === 0 ? 1 : -1) * cEff - (SET.desloc || 0), 0.5);
       });
       renderer.setRenderTarget(rtL);
       renderer.clear();
@@ -2382,13 +2389,13 @@ function render() {
       renderer.setViewport(0, 0, W, H);
       renderer.render(dScene, dCam);
     } else {
-      const sh = cEff * W / 2;
+      const sh = cEff * W / 2, gs = (SET.desloc || 0) * W / 2;
       renderer.setScissorTest(true);
       renderer.setScissor(0, 0, W / 2, H);
-      renderer.setViewport(sh, 0, W / 2, H);
+      renderer.setViewport(sh + gs, 0, W / 2, H);
       renderer.render(scene, stereo.cameraL);
       renderer.setScissor(W / 2, 0, W / 2, H);
-      renderer.setViewport(W / 2 - sh, 0, W / 2, H);
+      renderer.setViewport(W / 2 - sh + gs, 0, W / 2, H);
       renderer.render(scene, stereo.cameraR);
       renderer.setScissorTest(false);
     }
@@ -2685,6 +2692,32 @@ async function calibrate() {
   saveSET();
 }
 async function adjustView() {
+  V.aligning = true;
+  try {
+    for (; ; ) {
+      const r = await askRaw({ eyebrow: "Ajustar imagem", title: "Deixe esta letra n\xEDtida", text: "Feche um olho, depois o outro. Mexa at\xE9 o texto ficar no meio e n\xEDtido nos dois.\nAlavanca \u25C0 \u25B6 move a imagem \xB7 \u25B2 \u25BC separa ou junta.", buttons: [
+        { label: "\u25C0 Mover", value: "d+" },
+        { label: "Mover \u25B6", value: "d-" },
+        { label: "Juntar", value: "c+" },
+        { label: "Separar", value: "c-" },
+        { label: "Mais ajustes", value: "mais" },
+        { label: "Pronto", value: "ok", style: "primary" }
+      ], cols: 2, w: 1.2 });
+      const cl = (v, a, b) => Math.max(a, Math.min(b, v));
+      if (r === "ok") { saveSET(); return; }
+      if (r === "mais") { V.aligning = false; await adjustViewMais(); return; }
+      if (r === "d+") SET.desloc = cl((SET.desloc || 0) + 0.01, -0.2, 0.2);
+      if (r === "d-") SET.desloc = cl((SET.desloc || 0) - 0.01, -0.2, 0.2);
+      if (r === "c+") SET.centro = cl(+(SET.centro + 0.01).toFixed(3), -0.15, 0.3);
+      if (r === "c-") SET.centro = cl(+(SET.centro - 0.01).toFixed(3), -0.15, 0.3);
+      saveSET();
+    }
+  } finally {
+    V.aligning = false;
+    if (V.alignDirty) { V.alignDirty = 0; saveSET(); }
+  }
+}
+async function adjustViewMais() {
   for (; ; ) {
     const r = await askRaw({ eyebrow: "Ajustar imagem", title: "Veja a mudan\xE7a na hora", text: `Separa\xE7\xE3o ${Math.round(SET.ipd * 1e3)} mm \xB7 Zoom ${Math.round(100 - SET.fov)} \xB7 Curvatura ${Math.round(SET.lente * 10)} \xB7 Centro ${Math.round(SET.centro * 100)} \xB7 Texto ${Math.round(SET.texto * 100)}%
 Linhas retas parecem tortas? Mude a curvatura. Imagem dupla? Mude a separa\xE7\xE3o e o centro.`, buttons: [
@@ -2711,9 +2744,9 @@ Linhas retas parecem tortas? Mude a curvatura. Imagem dupla? Mude a separa\xE7\x
     }
     const cl = (v, a, b) => Math.max(a, Math.min(b, v));
     if (r === "i-")
-      SET.ipd = cl(SET.ipd - 2e-3, 0.054, 0.074);
+      SET.ipd = cl(SET.ipd - 2e-3, 0.02, 0.074);
     if (r === "i+")
-      SET.ipd = cl(SET.ipd + 2e-3, 0.054, 0.074);
+      SET.ipd = cl(SET.ipd + 2e-3, 0.02, 0.074);
     if (r === "f+")
       SET.fov = cl(SET.fov + 3, 65, 105);
     if (r === "f-")
@@ -5472,7 +5505,7 @@ def3({
 });
 
 // src/app.js
-var VERSAO = "vers\xE3o 16";
+var VERSAO = "vers\xE3o 17";
 var $ = (s) => document.querySelector(s);
 var $$ = (s) => [...document.querySelectorAll(s)];
 var esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
