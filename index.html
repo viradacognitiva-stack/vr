@@ -2220,12 +2220,29 @@ function pollPads(dt = 0) {
   }
 }
 var last = performance.now();
+// qualidade automática no óculos: imagem travando dá tontura, então o app baixa a qualidade até ficar fluido
+var QA = { pr: 1.6, sh: false, t: 0, n: 0, sum: 0 };
+function qualityTick(raw) {
+  if (V.mode !== "oculos" || !renderer) return;
+  QA.t += raw; QA.n++; QA.sum += raw;
+  if (QA.t < 2) return;
+  const fps = QA.n / QA.sum;
+  QA.t = 0; QA.n = 0; QA.sum = 0;
+  V.fps = Math.round(fps);
+  if (fps < 50 && QA.pr > 1) {
+    QA.pr = Math.max(1, +(QA.pr - 0.2).toFixed(2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, QA.pr));
+    resize();
+  }
+}
 function loop() {
   const tnow = performance.now();
-  let dt = Math.min(0.05, (tnow - last) / 1e3) * (window.__ts || 1);
+  const raw = (tnow - last) / 1e3;
+  let dt = Math.min(0.05, raw) * (window.__ts || 1);
   last = tnow;
   if (!V.on)
     return;
+  if (raw > 0 && raw < 0.5) qualityTick(raw);
   V.t += dt;
   pollPads(dt);
   if (V.mode === "oculos" && V.sensor && V.gyro && !V.ori)
@@ -2561,7 +2578,9 @@ function sunFollow(dt) {
   d.target.position.set(rig.position.x, rig.position.y, rig.position.z - 2);
   d.position.copy(d.target.position).addScaledVector(ENV.sunDir, 30);
   d.target.updateMatrixWorld();
-  renderer.shadowMap.needsUpdate = true;
+  const want = V.mode !== "oculos" || QA.sh;
+  if (d.castShadow !== want) d.castShadow = want;
+  if (want) renderer.shadowMap.needsUpdate = true;
 }
 function onUpdate(fn) {
   V.sceneUpd.push(fn);
@@ -2842,7 +2861,8 @@ function setMode(m) {
   V.yaw = 0;
   V.pitch = 0;
   if (renderer)
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, m === "oculos" ? 2.6 : 1.5));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, m === "oculos" ? QA.pr : 1.5));
+  QA.t = 0; QA.n = 0; QA.sum = 0;
   resize();
 }
 function beginRecord(cfg, def4) {
@@ -5510,7 +5530,7 @@ def3({
 });
 
 // src/app.js
-var VERSAO = "vers\xE3o 18";
+var VERSAO = "vers\xE3o 19";
 var $ = (s) => document.querySelector(s);
 var $$ = (s) => [...document.querySelectorAll(s)];
 var esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
