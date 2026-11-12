@@ -2649,6 +2649,7 @@ async function openPause() {
   }
 }
 async function calibrate() {
+  // calibração automática: a imagem vai juntando e separando sozinha; a pessoa só avisa quando vê UM círculo
   const g = new THREE.Group();
   const mk = (geo2, c) => {
     const m = new THREE.Mesh(geo2, new THREE.MeshBasicMaterial({ color: c, depthTest: false, toneMapped: false, side: THREE.DoubleSide }));
@@ -2656,42 +2657,46 @@ async function calibrate() {
     g.add(m);
     return m;
   };
-  mk(new THREE.RingGeometry(0.26, 0.3, 64), 16513783);
-  mk(new THREE.CircleGeometry(0.26, 64), 7240840).material.transparent = true;
-  mk(new THREE.PlaneGeometry(0.5, 0.025), 16513783);
-  mk(new THREE.PlaneGeometry(0.025, 0.5), 16513783);
-  const lab = label("Ajuste at\xE9 ver UM c\xEDrculo s\xF3", { w: 1.2, h: 0.16, size: 0.5, fg: "#FBFAF7", bg: "rgba(46,52,58,.9)", radius: 0.08, weight: 600 });
-  lab.material.depthTest = false;
-  lab.renderOrder = 991;
-  lab.position.y = 0.42;
-  g.add(lab);
-  place(g, { dist: 2.2, dy: 0.55 });
+  mk(new THREE.RingGeometry(0.3, 0.36, 64), 16513783);
+  mk(new THREE.CircleGeometry(0.3, 64), 7240840);
+  mk(new THREE.PlaneGeometry(0.6, 0.03), 16513783);
+  mk(new THREE.PlaneGeometry(0.03, 0.6), 16513783);
+  const lab = label("Quando vir UM c\xEDrculo s\xF3, aperte o bot\xE3o", { w: 1.5, h: 0.17, size: 0.5, fg: "#FBFAF7", bg: "rgba(46,52,58,.92)", radius: 0.08, weight: 600 });
+  lab.material.depthTest = false; lab.renderOrder = 991; lab.position.y = 0.52; g.add(lab);
+  const btn = label("Vejo um s\xF3", { w: 0.7, h: 0.17, size: 0.5, fg: "#FBFAF7", bg: "rgba(110,124,136,.95)", radius: 0.08, weight: 600 });
+  btn.material.depthTest = false; btn.renderOrder = 991; btn.position.y = -0.62; g.add(btn);
+  let done = false;
+  addTarget(btn, () => { done = true; }, { dwell: 1.4 });
+  const onInput = (t) => { if (/Controle|Tecla|bot/i.test(t) && !/alavanca/i.test(t)) done = true; };
+  INPUT.listeners.add(onInput);
+  place(g, { dist: 2.4, dy: 0 });
+  g.traverse((o) => { if (o.material) o.material.depthTest = false; });
+  const c0 = SET.centro, wasA = V.aligning;
+  V.aligning = true;
+  let t = 0, manual = false;
   try {
-    for (; ; ) {
-      const r = await askRaw({ eyebrow: "Calibrar o \xF3culos", title: "Quantos c\xEDrculos voc\xEA v\xEA?", text: "Se a letra estiver borrada, gire antes a rodinha de cima do \xF3culos.", buttons: [
-        { label: "Vejo dois: juntar", value: "c+" },
-        { label: "Vejo dois: separar", value: "c-" },
-        { label: "Letras pequenas", value: "t+" },
-        { label: "Vejo um s\xF3", value: "ok", style: "primary" }
-      ], cols: 2, w: 1.15, dist: 1.5, dy: -0.5 });
-      if (r === "ok")
-        break;
-      if (r === "c+")
-        SET.centro = Math.min(0.25, +(SET.centro + 0.015).toFixed(3));
-      if (r === "c-")
-        SET.centro = Math.max(-0.15, +(SET.centro - 0.015).toFixed(3));
-      if (r === "t+")
-        SET.textoVR = Math.min(2, +(SET.textoVR + 0.15).toFixed(2));
-      saveSET();
+    while (!done) {
+      await wait(0.05);
+      if (V.alignDirty) { manual = true; V.alignDirty = 0; }
+      if (manual || V.hover === btn) continue;
+      t += 0.05;
+      SET.centro = Math.max(-0.12, Math.min(0.26, 0.07 + 0.17 * Math.sin(t * 0.5)));
     }
   } finally {
+    V.aligning = wasA;
+    INPUT.listeners.delete(onInput);
+    removeTarget(btn);
     uiRoot.remove(g);
     disposeTree(g);
   }
-  store.set("vcvr_calibrado", true);
+  store.set("vcvr_calibrado2", true);
   saveSET();
 }
 async function adjustView() {
+  await calibrate();
+  const r0 = await askRaw({ eyebrow: "Ajustar imagem", title: "Ficou uma imagem s\xF3?", buttons: [{ label: "Sim, pronto", value: "ok", style: "primary" }, { label: "Calibrar de novo", value: "de" }, { label: "Ajuste fino", value: "fino" }], cols: 1, w: 0.9 });
+  if (r0 === "de") return adjustView();
+  if (r0 !== "fino") return;
   V.aligning = true;
   try {
     for (; ; ) {
@@ -5505,7 +5510,7 @@ def3({
 });
 
 // src/app.js
-var VERSAO = "vers\xE3o 17";
+var VERSAO = "vers\xE3o 18";
 var $ = (s) => document.querySelector(s);
 var $$ = (s) => [...document.querySelectorAll(s)];
 var esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -5800,7 +5805,7 @@ async function runSession(cfg, carry = null) {
         VSTATE.rec.notes.push("Sess\xE3o em modo guiado (sem sensor de movimento): condu\xE7\xE3o verbal pela terapeuta");
       }
     }
-    if (cfg.modo === "oculos" && !VSTATE.guided && !carry && !store.get("vcvr_calibrado", false))
+    if (cfg.modo === "oculos" && !VSTATE.guided && !carry && !store.get("vcvr_calibrado2", false))
       await calibrate();
     for (; ; ) {
       const r0 = await ask({ eyebrow: `Programa ${P.nome} \xB7 n\xEDvel ${cfg.nivel} \xB7 ${VERSAO}`, title: def4.nome, text: def4.intro(cfg.nivel), buttons: [{ label: "Come\xE7ar", value: "go", style: "primary" }, { label: "Ajustar imagem", value: "img" }], cols: 2, w: 1.35, big: true, dist: Math.min(VSTATE.uiDist, 1.6) });
