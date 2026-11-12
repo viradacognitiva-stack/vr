@@ -2030,8 +2030,10 @@ function bindInput(el) {
     if (!mx && !my)
       return;
     note("Mouse (alavanca no modo mouse)");
-    if (V.sensor)
+    if (V.sensor) {
       rig.rotation.y -= mx * 4e-3;
+      if (Math.abs(my) > Math.abs(mx)) walkStep(-my * 4e-3);
+    }
     else {
       V.yaw -= mx * 6e-3;
       V.pitch = Math.max(-1.35, Math.min(1.35, V.pitch - my * 6e-3));
@@ -2091,6 +2093,32 @@ function bindInput(el) {
     }
   });
 }
+var WK = { anchor: null, last: null };
+var _wd = new THREE.Vector3();
+function walkSync() {
+  if (!rig) return;
+  if (!WK.last || rig.position.distanceToSquared(WK.last) > 1e-8) {
+    WK.anchor = rig.position.clone();
+    WK.last = rig.position.clone();
+  }
+}
+function walkStep(d) {
+  if (!V.on || V.paused || !rig) return;
+  walkSync();
+  camera.getWorldDirection(_wd);
+  _wd.y = 0;
+  if (_wd.lengthSq() < 1e-6) return;
+  _wd.normalize();
+  const R = V.def && V.def.walk != null ? V.def.walk : 1.2;
+  const nx = rig.position.x + _wd.x * d, nz = rig.position.z + _wd.z * d;
+  let ox = nx - WK.anchor.x, oz = nz - WK.anchor.z;
+  const L = Math.hypot(ox, oz);
+  if (L > R) { ox *= R / L; oz *= R / L; }
+  rig.position.x = WK.anchor.x + ox;
+  rig.position.z = WK.anchor.z + oz;
+  WK.last.copy(rig.position);
+  if (!V.walkNote) { V.walkNote = 1; note("Andando com o controle"); }
+}
 var padsOk = true;
 function pollPads(dt = 0) {
   let pads = [];
@@ -2148,10 +2176,13 @@ function pollPads(dt = 0) {
     ly = -1;
   if (held.has("ArrowDown"))
     ly = 1;
+  walkSync();
   if (!V.on || !lx && !ly)
     return;
-  if (V.mode === "oculos" && V.sensor)
+  if (V.mode === "oculos" && V.sensor) {
     rig.rotation.y -= lx * 1.4 * dt;
+    if (Math.abs(ly) > 0.3) walkStep(-ly * 0.9 * dt);
+  }
   else {
     V.yaw -= lx * 1.6 * dt;
     V.pitch = Math.max(-1.35, Math.min(1.35, V.pitch - ly * 1.1 * dt));
@@ -3077,6 +3108,7 @@ var CARC = [15328992, 8226704, 3093304, 12038824, 9187114, 5531255, 14209732];
 def({
   id: "altura",
   prog: "coragem",
+  walk: 0.3,
   nome: "Altura",
   sub: "Varanda de pr\xE9dio",
   estimulo: "altura (varanda de edif\xEDcio)",
@@ -3230,6 +3262,7 @@ def({
 def({
   id: "elevador",
   prog: "coragem",
+  walk: 0.4,
   nome: "Elevador",
   sub: "Cabine fechada",
   estimulo: "elevador (espa\xE7o fechado)",
@@ -5410,7 +5443,7 @@ def3({
 });
 
 // src/app.js
-var VERSAO = "vers\xE3o 14";
+var VERSAO = "vers\xE3o 15";
 var $ = (s) => document.querySelector(s);
 var $$ = (s) => [...document.querySelectorAll(s)];
 var esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
