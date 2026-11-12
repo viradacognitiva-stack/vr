@@ -151,7 +151,7 @@ code{font-size:.86em;background:var(--sunk);padding:1px 6px;border-radius:6px}
 .vrbar .tip{background:rgba(27,31,35,.6);color:#ECE8E1;padding:6px 12px;border-radius:999px;font-size:.78rem}
 .vrbtn{background:rgba(27,31,35,.65);color:#ECE8E1;border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:8px 14px;cursor:pointer;font-weight:500}
 #vr.oculos .vrbar .tip{display:none}
-#vr.oculos .vrbtn{opacity:.35;padding:5px 10px;font-size:.75rem}
+#vr.oculos .vrbtn{opacity:.12;padding:5px 10px;font-size:.75rem}
 #vr.oculos::after{content:"";position:absolute;left:50%;top:0;bottom:0;width:2px;background:#000;transform:translateX(-1px);pointer-events:none}
 #rotate{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;background:#1B1F23;color:#ECE8E1;text-align:center;padding:24px}
 #rotate .ph{width:46px;height:78px;border:3px solid #ECE8E1;border-radius:9px;animation:rot 2.4s ease-in-out infinite}
@@ -414,6 +414,10 @@ var store = {
   }
 };
 var SET = Object.assign({ ipd: 0.064, dwell: 1.5, texto: 1, fov: 85, som: true, vol: 0.8, lente: 0, centro: 0, textoVR: 1.6 }, store.get("vcvr_ajustes", {}));
+if (!SET.v15) {
+  SET.v15 = true;
+  if (SET.ipd >= 0.06) SET.ipd = 0.04;
+}
 if (!SET.v10) {
   SET.v10 = true;
   if (SET.lente === 0.7)
@@ -855,10 +859,10 @@ function measurePanel(o) {
     y += parts.tl.length * (o.big ? 78 : 68) + 6;
   }
   if (o.text) {
-    g.font = `${V.mode === "oculos" ? 500 : 400} 38px ${FONT}`;
+    g.font = `${V.mode === "oculos" ? 500 : 400} ${V.mode === "oculos" ? 48 : 38}px ${FONT}`;
     parts.tx = wrap(g, o.text, inner);
     parts.xy = y + 8;
-    y += parts.tx.length * 52 + 16;
+    y += parts.tx.length * (V.mode === "oculos" ? 64 : 52) + 16;
   }
   if (o.extra) {
     parts.ex = y;
@@ -959,9 +963,9 @@ function panel(o) {
     P.tl.forEach((ln, i) => g.fillText(ln, L.pad, P.ty + i * (o.big ? 78 : 68)));
   }
   if (o.text) {
-    g.font = `${V.mode === "oculos" ? 500 : 400} 38px ${FONT}`;
+    g.font = `${V.mode === "oculos" ? 500 : 400} ${V.mode === "oculos" ? 48 : 38}px ${FONT}`;
     g.fillStyle = fg;
-    P.tx.forEach((ln, i) => g.fillText(ln, L.pad, P.xy + i * 52));
+    P.tx.forEach((ln, i) => g.fillText(ln, L.pad, P.xy + i * (V.mode === "oculos" ? 64 : 52)));
   }
   if (o.drawExtra)
     o.drawExtra(g, L.pad, P.ex, PX - L.pad * 2);
@@ -1033,7 +1037,23 @@ function headPitch() {
   _eu.setFromQuaternion(camera.quaternion, "YXZ");
   return _eu.x;
 }
+var _pb = null;
+function fitView(obj, dist) {
+  // no óculos, cada olho vê pouco para os lados: o painel inteiro precisa caber no centro da lente
+  if (V.mode !== "oculos" || !obj) return;
+  _pb = _pb || new THREE.Box3();
+  obj.updateMatrixWorld(true);
+  const p0 = obj.position.clone(), r0 = obj.rotation.clone(), par = obj.parent;
+  obj.position.set(0, 0, 0); obj.rotation.set(0, 0, 0); obj.updateMatrixWorld(true);
+  _pb.setFromObject(obj);
+  obj.position.copy(p0); obj.rotation.copy(r0);
+  const w = _pb.max.x - _pb.min.x, h = _pb.max.y - _pb.min.y;
+  if (!(w > 0)) return;
+  const f = Math.min(1, dist * 1.1 / w, dist * 0.85 / Math.max(h, 1e-3));
+  if (f < 1) obj.scale.multiplyScalar(f);
+}
 function place(obj, { dist = V.uiDist, dy = -0.05, yaw = null, yawOff = 0 } = {}) {
+  fitView(obj, dist);
   const y = (yaw ?? headYaw()) + yawOff;
   obj.position.set(-Math.sin(y) * dist, camera.position.y + dy, -Math.cos(y) * dist);
   obj.rotation.set(0, y, 0);
@@ -1593,10 +1613,14 @@ function bubble(P, text, { who = null } = {}) {
   const tk = SET.texto * (V.mode === "oculos" ? SET.textoVR : 1);
   sp.userData.bw = cw / 1024 * 1.25 * tk;
   sp.userData.bh = ch / 1024 * 1.25 * tk;
-  sp.scale.set(sp.userData.bw, sp.userData.bh, 1);
   const wp = new THREE.Vector3();
   P.head.getWorldPosition(wp);
   wp.y += 0.3;
+  if (V.mode === "oculos") {
+    const dd = wp.distanceTo(camera.getWorldPosition(new THREE.Vector3())), mx = dd * 0.7;
+    if (sp.userData.bw > mx) { const f = mx / sp.userData.bw; sp.userData.bw *= f; sp.userData.bh *= f; }
+  }
+  sp.scale.set(sp.userData.bw, sp.userData.bh, 1);
   sp.position.copy(wp);
   world.add(sp);
   P.bubble = sp;
@@ -2328,8 +2352,11 @@ function render() {
     camera.fov = Math.min(120, SET.fov * (1 + SET.lente * 0.18)) * (SET.lente > 0.02 ? 1 : 0.92);
     camera.aspect = W / 2 / H;
     camera.updateProjectionMatrix();
-    missionM.scale.setScalar(Math.min(1.5, SET.textoVR));
-    toastM.scale.setScalar(Math.min(1.5, SET.textoVR));
+    // no óculos: textos perto do centro da lente (onde é nítido) e mais longe (menos esforço para juntar as duas imagens)
+    missionM.position.set(0, 0.3, -2.3);
+    toastM.position.set(0, -0.32, -2.3);
+    missionM.scale.setScalar(Math.min(1.5, SET.textoVR) * 1.55);
+    toastM.scale.setScalar(Math.min(1.5, SET.textoVR) * 1.55);
     stereo.eyeSep = SET.ipd;
     stereo.update(camera);
     const halfMm = W * 0.159 / 2, lensHalf = (SET.lentes || 62) / 2;
@@ -2373,6 +2400,8 @@ function render() {
       camera.aspect = asp;
       camera.updateProjectionMatrix();
     }
+    missionM.position.set(0, 0.4, -1.45);
+    toastM.position.set(0, 0.82, -1.4);
     missionM.scale.setScalar(1);
     toastM.scale.setScalar(1);
     renderer.setViewport(0, 0, W, H);
@@ -5443,7 +5472,7 @@ def3({
 });
 
 // src/app.js
-var VERSAO = "vers\xE3o 15";
+var VERSAO = "vers\xE3o 16";
 var $ = (s) => document.querySelector(s);
 var $$ = (s) => [...document.querySelectorAll(s)];
 var esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
